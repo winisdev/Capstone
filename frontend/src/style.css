@@ -1,0 +1,49 @@
+/* ─── LNU Theme Tokens ─────────────────────────────────────────── */
+:root {
+  --lnu-navy:       #1A237E;
+  --lnu-navy-deep:  #0D1547;
+  --lnu-navy-light: #283593;
+  --lnu-gold:       #C9A84C;
+  --lnu-gold-light: #F0D080;
+  --lnu-gold-pale:  #FDF6E3;
+  --lnu-bg:         #F9F8F4;
+  --lnu-success:    #2E7D32;
+  --lnu-danger:     #C62828;
+  --lnu-gray:       #ECEFF1;
+  --lnu-gray-dark:  #B0BEC5;
+  --lnu-text:       #0D1547;
+  --lnu-text-muted: #607080;
+  --lnu-white:      #FFFFFF;
+  --lnu-card-shadow: 0 2px 16px rgba(26,35,126,0.10);
+  --lnu-radius:     10px;
+  --lnu-radius-lg:  16px;
+}
+
+/* ─── Reset & Base ──────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #app {
+  height: 100%;
+  min-height: 100vh;
+}
+
+body {
+  font-family: 'Georgia', 'Times New Roman', serif;
+  background: var(--lnu-bg);
+  color: var(--lnu-text);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.6;
+}
+
+/* ─── Scrollbar ─────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--lnu-gray); }
+::-webkit-scrollbar-thumb { background: var(--lnu-navy-light); border-radius: 99px; }
+
+/* ─── Utility ───────────────────────────────────────────────────── */
+.fade-enter-active, .fade-leave-active { transition: opacity 0.25s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }

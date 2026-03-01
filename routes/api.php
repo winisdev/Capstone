@@ -9,7 +9,12 @@ use App\Models\QuestionBank;
 use App\Models\Room;
 use App\Models\SystemSetting;
 use App\Models\User;
+use App\Services\AuditLogService;
+use App\Services\AuthTokenCookieService;
+use App\Services\ExamAttemptService;
+use App\Services\ExamDeliveryModeService;
 use App\Services\Library\DocxQuestionParser;
+use App\Services\RoleService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -17,12 +22,18 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
-$canManageRooms = static function (User $user): bool {
-    return in_array($user->role, [User::ROLE_ADMIN, User::ROLE_STAFF_MASTER_EXAMINER, 'faculty'], true);
+$roleService = app(RoleService::class);
+$auditLogService = app(AuditLogService::class);
+$authTokenCookieService = app(AuthTokenCookieService::class);
+$deliveryModeService = app(ExamDeliveryModeService::class);
+$examAttemptService = app(ExamAttemptService::class);
+
+$canManageRooms = static function (User $user) use ($roleService): bool {
+    return $roleService->canManageRooms($user);
 };
 
-$isAdmin = static function (User $user): bool {
-    return $user->role === User::ROLE_ADMIN;
+$isAdmin = static function (User $user) use ($roleService): bool {
+    return $roleService->isAdmin($user);
 };
 
 $recordAudit = static function (
@@ -33,25 +44,19 @@ $recordAudit = static function (
     ?string $description = null,
     array $metadata = [],
     ?Request $request = null,
-): void {
-    AuditLog::create([
-        'actor_id' => $actor?->id,
-        'action' => $action,
-        'target_type' => $targetType,
-        'target_id' => $targetId,
-        'description' => $description,
-        'metadata' => $metadata,
-        'ip_address' => $request?->ip(),
-    ]);
+) use ($auditLogService): void {
+    $auditLogService->record($actor, $action, $targetType, $targetId, $description, $metadata, $request);
 };
 
-$ensureActive = static function (Request $request) {
+$ensureActive = static function (Request $request) use ($authTokenCookieService) {
     $user = $request->user();
 
     if ($user && !$user->is_active) {
         $user->tokens()->delete();
 
-        return response()->json(['message' => 'Account is disabled.'], 403);
+        return $authTokenCookieService->clearTokenCookie(
+            response()->json(['message' => 'Account is disabled.'], 403)
+        );
     }
 
     return null;
@@ -84,248 +89,37 @@ $normalizeAnswerText = static function (?string $value): string {
     return Str::lower((string) $normalized);
 };
 
-$normalizeDeliveryMode = static function (?string $mode): string {
-    return match ((string) $mode) {
-        Exam::DELIVERY_MODE_OPEN_NAVIGATION,
-        Exam::DELIVERY_MODE_TEACHER_PACED,
-        Exam::DELIVERY_MODE_INSTANT_FEEDBACK => (string) $mode,
-        Exam::DELIVERY_MODE_LIVE_QUIZ => Exam::DELIVERY_MODE_TEACHER_PACED,
-        default => Exam::DELIVERY_MODE_OPEN_NAVIGATION,
-    };
+$normalizeDeliveryMode = static function (?string $mode) use ($deliveryModeService): string {
+    return $deliveryModeService->normalize($mode);
 };
 
-$deliveryModeValidationModes = [
-    ...Exam::DELIVERY_MODES,
-    Exam::DELIVERY_MODE_STANDARD,
-    Exam::DELIVERY_MODE_LIVE_QUIZ,
-];
+$deliveryModeValidationModes = $deliveryModeService->validationModes();
 
-$resolveTeacherPacedTotalItems = static function (Exam $exam): int {
-    $configuredItems = max(1, (int) $exam->total_items);
-
-    if (!$exam->question_bank_id) {
-        return $configuredItems;
-    }
-
-    $availableItems = DB::table('question_bank_questions')
-        ->where('question_bank_id', (int) $exam->question_bank_id)
-        ->count();
-
-    if ($availableItems < 1) {
-        return $configuredItems;
-    }
-
-    return max(1, min($configuredItems, (int) $availableItems));
+$resolveTeacherPacedTotalItems = static function (Exam $exam) use ($deliveryModeService): int {
+    return $deliveryModeService->resolveTeacherPacedTotalItems($exam);
 };
 
-$resolveTeacherPacingState = static function (int $examId, int $roomId): ?array {
-    $state = DB::table('exam_room_pacing_states')
-        ->select('is_active', 'current_item_number', 'started_at', 'updated_at')
-        ->where('exam_id', $examId)
-        ->where('room_id', $roomId)
-        ->first();
-
-    if (!$state) {
-        return null;
-    }
-
-    return [
-        'is_active' => (bool) $state->is_active,
-        'current_item_number' => is_null($state->current_item_number) ? null : (int) $state->current_item_number,
-        'started_at' => $state->started_at,
-        'updated_at' => $state->updated_at,
-    ];
+$resolveTeacherPacingState = static function (int $examId, int $roomId) use ($deliveryModeService): ?array {
+    return $deliveryModeService->resolveTeacherPacingState($examId, $roomId);
 };
 
-$buildTeacherPacingPayload = static function (?array $state, int $totalItems): ?array {
-    if (is_null($state)) {
-        return null;
-    }
-
-    $currentItemNumber = is_null($state['current_item_number'] ?? null)
-        ? null
-        : max(1, min((int) $state['current_item_number'], max(1, $totalItems)));
-
-    return [
-        'is_active' => (bool) ($state['is_active'] ?? false),
-        'current_item_number' => $currentItemNumber,
-        'total_items' => max(1, $totalItems),
-        'started_at' => $state['started_at'] ?? null,
-        'updated_at' => $state['updated_at'] ?? null,
-    ];
+$buildTeacherPacingPayload = static function (?array $state, int $totalItems) use ($deliveryModeService): ?array {
+    return $deliveryModeService->buildTeacherPacingPayload($state, $totalItems);
 };
 
-$refreshAttemptMetrics = static function (ExamAttempt $attempt, bool $finalize = false): ExamAttempt {
-    $answers = $attempt->answers()
-        ->select('is_correct')
-        ->get();
-
-    $answeredCount = $answers->count();
-    $correctAnswers = $answers->where('is_correct', true)->count();
-    $scorePercent = $attempt->total_items > 0
-        ? round(($correctAnswers / $attempt->total_items) * 100, 2)
-        : 0.0;
-
-    $attempt->answered_count = $answeredCount;
-    $attempt->correct_answers = $correctAnswers;
-
-    if ($finalize) {
-        $attempt->status = ExamAttempt::STATUS_SUBMITTED;
-        $attempt->submitted_at = $attempt->submitted_at ?? now();
-        $attempt->score_percent = $scorePercent;
-    }
-
-    if ($attempt->status === ExamAttempt::STATUS_SUBMITTED && is_null($attempt->score_percent)) {
-        $attempt->score_percent = $scorePercent;
-    }
-
-    $attempt->save();
-
-    return $attempt->refresh();
+$refreshAttemptMetrics = static function (ExamAttempt $attempt, bool $finalize = false) use ($examAttemptService): ExamAttempt {
+    return $examAttemptService->refreshMetrics($attempt, $finalize);
 };
 
-$autoSubmitExpiredAttempt = static function (ExamAttempt $attempt) use ($refreshAttemptMetrics): ExamAttempt {
-    if (
-        $attempt->status !== ExamAttempt::STATUS_IN_PROGRESS
-        || is_null($attempt->expires_at)
-        || now()->lessThanOrEqualTo($attempt->expires_at)
-    ) {
-        return $attempt;
-    }
-
-    return $refreshAttemptMetrics($attempt, true);
+$autoSubmitExpiredAttempt = static function (ExamAttempt $attempt) use ($examAttemptService): ExamAttempt {
+    return $examAttemptService->autoSubmitExpiredAttempt($attempt);
 };
 
-$buildAttemptPayload = static function (ExamAttempt $attempt) use (
-    $normalizeDeliveryMode,
-    $resolveTeacherPacingState,
-    $buildTeacherPacingPayload,
-    $resolveTeacherPacedTotalItems
-): array {
-    $attempt->loadMissing([
-        'exam:id,title,subject,question_bank_id,total_items,duration_minutes,scheduled_at,delivery_mode,one_take_only,shuffle_questions',
-        'room:id,name,code',
-        'attemptQuestions.question.options:id,question_bank_question_id,option_label,option_text,is_correct',
-        'answers',
-    ]);
-
-    $deliveryMode = $normalizeDeliveryMode($attempt->exam?->delivery_mode);
-    $isInstantFeedback = $deliveryMode === Exam::DELIVERY_MODE_INSTANT_FEEDBACK;
-    $isSubmitted = $attempt->status === ExamAttempt::STATUS_SUBMITTED;
-    $showPerQuestionFeedback = $isSubmitted || $isInstantFeedback;
-    $answersByQuestionId = $attempt->answers->keyBy('question_bank_question_id');
-
-    $teacherPacing = null;
-
-    if ($deliveryMode === Exam::DELIVERY_MODE_TEACHER_PACED && $attempt->exam) {
-        $teacherPacingState = $resolveTeacherPacingState((int) $attempt->exam_id, (int) $attempt->room_id);
-        $teacherPacing = $buildTeacherPacingPayload(
-            $teacherPacingState,
-            $resolveTeacherPacedTotalItems($attempt->exam),
-        );
-    }
-
-    $questions = $attempt->attemptQuestions
-        ->sortBy('item_number')
-        ->values()
-        ->map(function (ExamAttemptQuestion $attemptQuestion) use (
-            $answersByQuestionId,
-            $isSubmitted,
-            $isInstantFeedback,
-            $showPerQuestionFeedback
-        ): ?array {
-            $question = $attemptQuestion->question;
-
-            if (!$question) {
-                return null;
-            }
-
-            $answer = $answersByQuestionId->get($question->id);
-            $hasAnswer = !is_null($answer);
-
-            return [
-                'question_id' => $question->id,
-                'item_number' => $attemptQuestion->item_number,
-                'is_bookmarked' => (bool) $attemptQuestion->is_bookmarked,
-                'question_text' => $question->question_text,
-                'question_type' => $question->question_type,
-                'options' => $question->options->map(fn ($option) => [
-                    'id' => $option->id,
-                    'label' => $option->option_label,
-                    'text' => $option->option_text,
-                    'is_correct' => $isSubmitted ? (bool) $option->is_correct : null,
-                ])->values(),
-                'answer' => [
-                    'selected_option_id' => $answer?->question_bank_option_id,
-                    'answer_text' => $answer?->answer_text,
-                    'is_correct' => $showPerQuestionFeedback && $hasAnswer ? $answer?->is_correct : null,
-                ],
-                'correct_answer' => ($isSubmitted || ($isInstantFeedback && $hasAnswer))
-                    ? [
-                        'label' => $question->answer_label,
-                        'text' => $question->answer_text,
-                    ]
-                    : null,
-            ];
-        })
-        ->filter()
-        ->values()
-        ->all();
-
-    $remainingSeconds = null;
-
-    if ($attempt->status === ExamAttempt::STATUS_IN_PROGRESS && $attempt->expires_at) {
-        $remainingSeconds = max(0, now()->diffInSeconds($attempt->expires_at, false));
-    }
-
-    $nextRequiredItemNumber = null;
-
-    if ($isInstantFeedback && !$isSubmitted) {
-        $nextRequired = $attempt->attemptQuestions
-            ->sortBy('item_number')
-            ->first(fn (ExamAttemptQuestion $attemptQuestion) => !$answersByQuestionId->has((int) $attemptQuestion->question_bank_question_id));
-
-        $nextRequiredItemNumber = $nextRequired?->item_number;
-    }
-
-    return [
-        'attempt' => [
-            'id' => $attempt->id,
-            'status' => $attempt->status,
-            'total_items' => $attempt->total_items,
-            'duration_minutes' => $attempt->duration_minutes,
-            'answered_count' => $attempt->answered_count,
-            'correct_answers' => $attempt->correct_answers,
-            'score_percent' => $attempt->score_percent,
-            'started_at' => $attempt->started_at,
-            'expires_at' => $attempt->expires_at,
-            'submitted_at' => $attempt->submitted_at,
-            'remaining_seconds' => $remainingSeconds,
-            'next_required_item_number' => $nextRequiredItemNumber,
-        ],
-        'exam' => [
-            'id' => $attempt->exam?->id ?? $attempt->exam_id,
-            'title' => $attempt->exam?->title,
-            'subject' => $attempt->exam?->subject,
-            'question_bank_id' => $attempt->exam?->question_bank_id,
-            'total_items' => $attempt->exam?->total_items,
-            'duration_minutes' => $attempt->exam?->duration_minutes,
-            'scheduled_at' => $attempt->exam?->scheduled_at,
-            'delivery_mode' => $deliveryMode,
-            'one_take_only' => (bool) ($attempt->exam?->one_take_only ?? false),
-            'shuffle_questions' => (bool) ($attempt->exam?->shuffle_questions ?? false),
-        ],
-        'room' => [
-            'id' => $attempt->room?->id ?? $attempt->room_id,
-            'name' => $attempt->room?->name,
-            'code' => $attempt->room?->code,
-        ],
-        'teacher_pacing' => $teacherPacing,
-        'questions' => $questions,
-    ];
+$buildAttemptPayload = static function (ExamAttempt $attempt) use ($examAttemptService): array {
+    return $examAttemptService->buildAttemptPayload($attempt);
 };
 
-Route::post('/auth/register', function (Request $request) use ($recordAudit) {
+Route::post('/auth/register', function (Request $request) use ($recordAudit, $authTokenCookieService) {
     $registrationSetting = SystemSetting::query()
         ->where('key', 'allow_public_registration')
         ->value('value');
@@ -368,13 +162,14 @@ Route::post('/auth/register', function (Request $request) use ($recordAudit) {
         $request,
     );
 
-    return response()->json([
+    $response = response()->json([
         'user' => $user,
-        'token' => $token,
     ], 201);
+
+    return $authTokenCookieService->attachTokenCookie($response, $token);
 });
 
-Route::post('/auth/login', function (Request $request) {
+Route::post('/auth/login', function (Request $request) use ($authTokenCookieService) {
     $validated = $request->validate([
         'email' => ['required', 'email'],
         'password' => ['required'],
@@ -392,10 +187,11 @@ Route::post('/auth/login', function (Request $request) {
 
     $token = $user->createToken('spa')->plainTextToken;
 
-    return response()->json([
+    $response = response()->json([
         'user' => $user,
-        'token' => $token,
     ]);
+
+    return $authTokenCookieService->attachTokenCookie($response, $token);
 });
 
 Route::middleware('auth:sanctum')->group(function () use (
@@ -415,6 +211,7 @@ Route::middleware('auth:sanctum')->group(function () use (
     $buildAttemptPayload,
     $systemSettingBooleanKeys,
     $systemSettingDefaults,
+    $authTokenCookieService,
 ) {
     Route::get('/auth/me', function (Request $request) use ($ensureActive) {
         if ($inactiveResponse = $ensureActive($request)) {
@@ -431,7 +228,9 @@ Route::middleware('auth:sanctum')->group(function () use (
 
         $request->user()->currentAccessToken()?->delete();
 
-        return response()->json(['message' => 'Logged out']);
+        return $authTokenCookieService->clearTokenCookie(
+            response()->json(['message' => 'Logged out'])
+        );
     });
 
     Route::get('/rooms', function (Request $request) use ($canManageRooms, $ensureActive, $isAdmin) {

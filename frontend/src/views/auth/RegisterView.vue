@@ -146,7 +146,7 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthStore } from '@/store/auth.store'
 import {
   BarChart3,
   ClipboardCheck,
@@ -278,7 +278,7 @@ async function handleSubmit() {
 
 .brand-label {
   margin-top: 22px;
-  font-size: 12px;
+  font-size: 14px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(240, 208, 128, 0.88);
@@ -294,7 +294,7 @@ async function handleSubmit() {
 .brand-copy {
   margin-top: 14px;
   color: rgba(255, 255, 255, 0.82);
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .brand-list {
@@ -311,7 +311,7 @@ async function handleSubmit() {
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: var(--radius-md);
   padding: 11px 12px;
-  font-size: 13px;
+  font-size: 14px;
   color: rgba(255, 255, 255, 0.88);
 }
 
@@ -348,7 +348,7 @@ async function handleSubmit() {
 }
 
 .eyebrow {
-  font-size: 12px;
+  font-size: 14px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--lnu-navy-light);
@@ -356,7 +356,7 @@ async function handleSubmit() {
 }
 
 .subtitle {
-  font-size: 14px;
+  font-size: 15px;
   color: var(--lnu-text-muted);
 }
 
@@ -364,7 +364,7 @@ async function handleSubmit() {
   margin-top: 16px;
   border-radius: var(--radius-sm);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .alert-danger {
@@ -391,7 +391,7 @@ async function handleSubmit() {
 }
 
 .field-label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--lnu-text);
 }
@@ -475,7 +475,7 @@ async function handleSubmit() {
 }
 
 .field-error {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--lnu-danger);
 }
 
@@ -500,7 +500,7 @@ async function handleSubmit() {
 }
 
 .pw-label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -508,7 +508,7 @@ async function handleSubmit() {
   display: flex;
   align-items: flex-start;
   gap: 9px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--lnu-text-muted);
 }
 
@@ -568,7 +568,7 @@ async function handleSubmit() {
   margin-top: 18px;
   color: var(--lnu-text-muted);
   text-align: center;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 @keyframes spin {

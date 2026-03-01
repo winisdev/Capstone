@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import api from '@/lib/api'
+import { questionsApi } from '@/api/questions.api'
 import { LIBRARY_SUBJECT_CATEGORIES } from '@/constants/librarySubjects'
 
 function asBooleanValue(source) {
@@ -124,9 +124,7 @@ export function useLibraryManager({
       const formData = new FormData()
       formData.append('file', file)
 
-      const { data } = await api.post('/library/import/preview', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
+      const { data } = await questionsApi.importPreview(formData)
 
       const preview = data.preview ?? {}
       const previewQuestions = preview.questions ?? []
@@ -171,7 +169,7 @@ export function useLibraryManager({
     libraryError.value = ''
 
     try {
-      const { data } = await api.get('/library/banks')
+      const { data } = await questionsApi.listBanks()
       libraryQuestionBanks.value = data.banks ?? []
     } catch (error) {
       libraryError.value = resolveApiError(error, 'Unable to load question banks right now.')
@@ -207,7 +205,7 @@ export function useLibraryManager({
     }
 
     try {
-      await api.post('/library/banks', payload)
+      await questionsApi.saveBank(payload)
       closeLibraryQuestionModal()
       libraryMessage.value = 'Question bank saved successfully.'
       await Promise.all([
@@ -229,7 +227,7 @@ export function useLibraryManager({
     libraryMessage.value = ''
 
     try {
-      await api.delete(`/library/banks/${selectedLibraryBank.value.id}`)
+      await questionsApi.deleteBank(selectedLibraryBank.value.id)
       closeDeleteLibraryBankModal()
       libraryMessage.value = 'Question bank deleted successfully.'
       await Promise.all([

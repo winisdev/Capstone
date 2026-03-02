@@ -4,7 +4,8 @@ import { authApi } from '@/api/auth.api'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
-  const initialized = ref(false)
+  // Require explicit login on each fresh app load (no silent session restore).
+  const initialized = ref(true)
 
   const isAuthenticated = computed(() => !!user.value)
 

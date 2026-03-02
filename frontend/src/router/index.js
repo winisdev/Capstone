@@ -102,10 +102,6 @@ router.beforeEach(async (to) => {
   if (!isPublic && !auth.isAuthenticated) {
     return { name: 'login' }
   }
-
-  if (isPublic && auth.isAuthenticated) {
-    return { name: 'dashboard-home' }
-  }
 })
 
 export default router

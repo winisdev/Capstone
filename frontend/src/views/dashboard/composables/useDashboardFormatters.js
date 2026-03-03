@@ -47,10 +47,14 @@ export function formatClockTime(value) {
   return `${padTimePart(parsed.getHours())}:${padTimePart(parsed.getMinutes())}:${padTimePart(parsed.getSeconds())}`
 }
 
-export function formatExamSchedule(value) {
-  const parsed = parseDateTime(value)
-  if (!parsed) return 'No schedule set'
-  return formatDateTime(parsed)
+export function formatExamSchedule(startValue, endValue = null) {
+  const start = parseDateTime(startValue)
+  const end = parseDateTime(endValue)
+
+  if (!start && !end) return 'No schedule set'
+  if (start && end) return `${formatDateTime(start)} to ${formatDateTime(end)}`
+  if (start) return `Starts ${formatDateTime(start)}`
+  return `Ends ${formatDateTime(end)}`
 }
 
 export function formatRemainingDuration(totalSeconds) {
@@ -61,4 +65,3 @@ export function formatRemainingDuration(totalSeconds) {
 
   return `${padTimePart(hours)}:${padTimePart(minutes)}:${padTimePart(seconds)}`
 }
-

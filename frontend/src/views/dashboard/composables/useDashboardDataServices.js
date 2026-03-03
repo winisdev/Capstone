@@ -21,6 +21,7 @@ export function useDashboardDataServices() {
     updateRoom: (roomId, payload) => roomsApi.update(roomId, payload),
     deleteRoom: (roomId) => roomsApi.remove(roomId),
     joinRoom: (payload) => roomsApi.join(payload),
+    removeRoomMember: (roomId, memberId) => roomsApi.removeMember(roomId, memberId),
     leaveRoom: (roomId) => roomsApi.leave(roomId),
 
     getLibraryBanks: () => questionsApi.listBanks(),

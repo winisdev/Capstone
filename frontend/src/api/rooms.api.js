@@ -25,6 +25,10 @@ class RoomsApi {
     return http.post('/rooms/join', payload)
   }
 
+  removeMember(roomId, memberId) {
+    return http.delete(`/rooms/${roomId}/members/${memberId}`)
+  }
+
   leave(roomId) {
     return http.delete(`/rooms/${roomId}/leave`)
   }

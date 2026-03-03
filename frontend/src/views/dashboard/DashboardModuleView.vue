@@ -383,31 +383,25 @@
 
                   <template v-else-if="selectedRoom">
                     <header class="room-detail-head">
-                      <div>
+                      <div class="room-detail-head-copy">
                         <h4>{{ selectedRoom.name }}</h4>
-                      </div>
-                    </header>
-
-                    <div class="room-detail-toolbar">
-                      <div class="room-code-chip">
-                        <span class="room-code-label">
+                        <p class="room-detail-subtitle">
                           <DoorOpen :size="14" />
-                          Room Code
-                        </span>
-                        <strong class="room-code-value">{{ selectedRoom.code }}</strong>
+                          Room Code:
+                          <strong>{{ selectedRoom.code }}</strong>
+                        </p>
                       </div>
-
-                      <div class="room-action-group">
-                        <button class="danger-btn" :disabled="roomLoading || roomDetailsLoading" @click="openDeleteRoomModal">
+                      <div class="room-detail-head-actions">
+                        <button class="danger-btn room-head-delete-btn" :disabled="roomLoading || roomDetailsLoading" @click="openDeleteRoomModal">
                           <Trash2 :size="14" />
                           Delete
                         </button>
-                        <button class="ghost-btn" :disabled="roomLoading || roomDetailsLoading" @click="openEditRoomModal">
+                        <button class="ghost-btn room-head-edit-btn" :disabled="roomLoading || roomDetailsLoading" @click="openEditRoomModal">
                           <Pencil :size="14" />
                           Edit
                         </button>
                       </div>
-                    </div>
+                    </header>
 
                     <div class="room-detail-grid">
                       <article class="detail-card">
@@ -422,7 +416,9 @@
                               <strong class="exam-card-title">{{ exam.title }}</strong>
                               <p class="exam-card-meta">{{ exam.progress ?? '0 / 0 answered' }}</p>
                               <p class="exam-card-meta">{{ examDeliveryModeLabel(exam.delivery_mode) }}</p>
-                              <p class="exam-card-date">Schedule: {{ formatExamSchedule(exam.scheduled_at) }}</p>
+                              <p class="exam-card-date">
+                                Schedule: {{ formatExamSchedule(exam.schedule_start_at ?? exam.scheduled_at, exam.schedule_end_at) }}
+                              </p>
                             </div>
 
                             <div class="exam-card-actions">
@@ -451,11 +447,24 @@
                             <span class="member-avatar">
                               <UserRound :size="16" />
                             </span>
-                            <div>
+                            <div class="member-info">
                               <strong>{{ member.name }}</strong>
                               <p>{{ member.email }}</p>
                             </div>
-                            <span class="pill neutral">{{ displayMemberRole(member.role) }}</span>
+                            <div class="member-item-actions">
+                              <span class="pill neutral">{{ displayMemberRole(member.role) }}</span>
+                              <button
+                                v-if="canRemoveRoomMember(member)"
+                                type="button"
+                                class="member-kick-icon-btn"
+                                :aria-label="`Remove ${member.name} from room`"
+                                title="Remove from room"
+                                :disabled="roomLoading || roomDetailsLoading"
+                                @click="handleKickRoomMember(member)"
+                              >
+                                <UserMinus :size="14" />
+                              </button>
+                            </div>
                           </li>
                         </ul>
                       </article>
@@ -624,27 +633,21 @@
 
                   <template v-else-if="selectedRoom">
                     <header class="room-detail-head">
-                      <div>
+                      <div class="room-detail-head-copy">
                         <h4>{{ selectedRoom.name }}</h4>
-                      </div>
-                    </header>
-
-                    <div class="room-detail-toolbar">
-                      <div class="room-code-chip">
-                        <span class="room-code-label">
+                        <p class="room-detail-subtitle">
                           <DoorOpen :size="14" />
-                          Room Code
-                        </span>
-                        <strong class="room-code-value">{{ selectedRoom.code }}</strong>
+                          Room Code:
+                          <strong>{{ selectedRoom.code }}</strong>
+                        </p>
                       </div>
-
-                      <div class="room-action-group">
-                        <button class="danger-btn" :disabled="roomLoading || roomDetailsLoading" @click="openLeaveRoomModal">
+                      <div class="room-detail-head-actions">
+                        <button class="danger-btn room-head-leave-btn" :disabled="roomLoading || roomDetailsLoading" @click="openLeaveRoomModal">
                           <LogOut :size="14" />
                           Leave Room
                         </button>
                       </div>
-                    </div>
+                    </header>
 
                     <div class="room-detail-grid">
                       <article class="detail-card">
@@ -658,7 +661,7 @@
                             v-for="exam in selectedRoom.assigned_exams"
                             :key="exam.id"
                             class="exam-card"
-                            :class="{ locked: !canStudentTakeExam(exam) }"
+                            :class="{ locked: !canStudentOpenExam(exam) }"
                           >
                             <div>
                               <strong class="exam-card-title">{{ exam.title }}</strong>
@@ -669,10 +672,15 @@
                             <button
                               type="button"
                               class="primary-btn exam-start-btn"
-                              :disabled="!canStudentTakeExam(exam)"
+                              :class="{
+                                resume: isStudentExamInProgress(exam),
+                                retake: isStudentExamCompleted(exam) && !isStudentExamRetakeLimitReached(exam),
+                                review: isStudentExamRetakeLimitReached(exam),
+                              }"
+                              :disabled="!canStudentOpenExam(exam)"
                               @click="openExamSimulation(exam)"
                             >
-                              Take Exam
+                              {{ studentExamActionLabel(exam) }}
                             </button>
                           </article>
                         </div>
@@ -689,7 +697,7 @@
                             <span class="member-avatar">
                               <UserRound :size="16" />
                             </span>
-                            <div>
+                            <div class="member-info">
                               <strong>{{ member.name }}</strong>
                               <p>{{ member.email }}</p>
                             </div>
@@ -794,6 +802,9 @@
                       <span v-if="studentExamAttempt && isStudentExamSubmitted" class="pill success">
                         Score: {{ Number(studentExamAttempt.score_percent ?? 0).toFixed(2) }}%
                       </span>
+                      <span v-if="studentExamAttempt && isStudentExamSubmitted" class="pill neutral">
+                        {{ Number(studentExamAttempt.correct_answers ?? 0) }}/{{ Number(studentExamAttempt.total_items ?? 0) }} correct
+                      </span>
                       <button
                         type="button"
                         class="ghost-btn"
@@ -816,7 +827,7 @@
                   </div>
 
                   <div v-else-if="studentExamAttempt" class="exam-attempt-layout">
-                    <aside class="exam-attempt-sidebar">
+                    <aside class="exam-attempt-sidebar" :class="{ 'is-collapsed': examAttemptSidebarCollapsed }">
                       <div class="exam-status-legend">
                         <template v-if="!isStudentExamSubmitted && isStudentOpenNavigationMode">
                           <span class="legend-item"><i class="legend-dot current" /> Current</span>
@@ -834,9 +845,8 @@
                         </template>
                         <template v-else>
                           <span class="legend-item"><i class="legend-dot current-outline" /> Current</span>
-                          <span class="legend-item"><i class="legend-dot correct" /> Correct</span>
-                          <span class="legend-item"><i class="legend-dot incorrect" /> Incorrect</span>
-                          <span class="legend-item"><i class="legend-dot missed" /> Missed</span>
+                          <span class="legend-item"><i class="legend-dot answered" /> Answered</span>
+                          <span class="legend-item"><i class="legend-dot missed" /> Not answered</span>
                           <span class="legend-item"><i class="legend-ribbon" /> Bookmarked</span>
                         </template>
                       </div>
@@ -916,7 +926,7 @@
                             v-for="option in currentStudentExamQuestion.options"
                             :key="option.id"
                             class="exam-option-card"
-                            :class="{ selected: studentAnswerDraft.selected_option_id === option.id }"
+                            :class="examOptionCardClass(option)"
                           >
                             <input
                               :checked="studentAnswerDraft.selected_option_id === option.id"
@@ -928,60 +938,37 @@
                           </label>
                         </div>
 
-                        <div
-                          v-if="isStudentExamSubmitted || (isStudentInstantFeedbackMode && currentStudentExamQuestion.answer?.is_correct !== null)"
-                          class="exam-attempt-review"
-                        >
-                          <p>
-                            Your answer:
-                            <strong>
-                              {{
-                                currentStudentExamQuestion.answer?.answer_text
-                                  || currentStudentExamQuestion.answer?.selected_option_id
-                                  || 'No answer'
-                              }}
-                            </strong>
-                          </p>
-                          <p v-if="currentStudentExamQuestion.correct_answer?.label || currentStudentExamQuestion.correct_answer?.text">
-                            Correct answer:
-                            <strong>
-                              {{ currentStudentExamQuestion.correct_answer?.label || '' }}
-                              <span v-if="currentStudentExamQuestion.correct_answer?.text">
-                                {{ currentStudentExamQuestion.correct_answer.text }}
-                              </span>
-                            </strong>
-                          </p>
-                          <p>
-                            Verdict:
-                            <strong
-                              :class="{
-                                ok: currentStudentExamQuestion.answer?.is_correct === true,
-                                danger: currentStudentExamQuestion.answer?.is_correct === false,
-                              }"
-                            >
-                              {{
-                                currentStudentExamQuestion.answer?.is_correct === true
-                                  ? 'Correct'
-                                  : (currentStudentExamQuestion.answer?.is_correct === false ? 'Incorrect' : 'Not Answered')
-                              }}
-                            </strong>
-                          </p>
-                        </div>
                       </article>
 
                       <div class="exam-attempt-footer">
                         <button
                           v-if="!isStudentExamSubmitted && currentStudentExamQuestion && isStudentOpenNavigationMode"
                           type="button"
-                          class="ghost-btn bookmark-toggle-btn"
-                          :class="{ 'bookmark-active': currentStudentExamQuestion.is_bookmarked }"
+                          class="bookmark-toggle-btn"
+                          :class="{ 'is-bookmarked': currentStudentExamQuestion.is_bookmarked, 'is-loading': studentExamBookmarking }"
+                          :aria-pressed="currentStudentExamQuestion.is_bookmarked ? 'true' : 'false'"
+                          :title="currentStudentExamQuestion.is_bookmarked ? 'Remove bookmark' : 'Bookmark this question'"
                           :disabled="studentExamSaving || studentExamSubmitting || studentExamBookmarking"
                           @click="toggleCurrentQuestionBookmark"
                         >
-                          <span>{{ currentStudentExamQuestion.is_bookmarked ? 'Remove Bookmark' : 'Bookmark' }}</span>
+                          <RefreshCw v-if="studentExamBookmarking" :size="14" class="spin-soft" />
+                          <BookmarkCheck v-else-if="currentStudentExamQuestion.is_bookmarked" :size="14" />
+                          <Bookmark v-else :size="14" />
+                          <span class="bookmark-toggle-label">
+                            {{ currentStudentExamQuestion.is_bookmarked ? 'Bookmarked' : 'Bookmark' }}
+                          </span>
                         </button>
 
                         <div v-if="isStudentOpenNavigationMode" class="exam-attempt-nav">
+                          <button
+                            type="button"
+                            class="ghost-btn exam-sidebar-inline-toggle"
+                            :aria-expanded="(!examAttemptSidebarCollapsed).toString()"
+                            @click="toggleExamAttemptSidebar"
+                          >
+                            {{ examAttemptSidebarCollapsed ? 'Show Question List' : 'Hide Question List' }}
+                            <ChevronRight :size="15" :class="{ 'is-open': !examAttemptSidebarCollapsed }" />
+                          </button>
                           <button
                             type="button"
                             class="ghost-btn"
@@ -1405,7 +1392,9 @@
                   </div>
                   <p class="muted">Question Set: {{ exam.question_bank?.title || 'Not linked yet' }}</p>
                   <p v-if="exam.description" class="muted">{{ exam.description }}</p>
-                  <p class="muted">Schedule: {{ formatExamSchedule(exam.scheduled_at) }}</p>
+                  <p class="muted">
+                    Schedule: {{ formatExamSchedule(exam.schedule_start_at ?? exam.scheduled_at, exam.schedule_end_at) }}
+                  </p>
                 </div>
 
                 <div class="management-actions">
@@ -1423,14 +1412,16 @@
           </article>
 
           <teleport to="body">
-            <div v-if="showExamModal" class="modal-backdrop" @click.self="closeExamModal">
-              <div class="modal-card">
-                <header class="modal-head">
+            <div v-if="showExamModal" class="modal-backdrop exam-modal-backdrop" @click.self="closeExamModal">
+              <div class="modal-card exam-modal-card">
+                <header class="modal-head exam-modal-head">
                   <h4>{{ examForm.id ? 'Edit Exam' : 'Create Exam' }}</h4>
                   <button type="button" class="modal-close" @click="closeExamModal">
                     <X :size="16" />
                   </button>
                 </header>
+
+                <div class="exam-modal-body">
 
                 <label class="field-stack">
                   <span class="field-label">Title</span>
@@ -1460,11 +1451,20 @@
                   <small class="muted">Link a question set so students can attempt this exam.</small>
                 </label>
 
-                <label class="field-stack">
-                  <span class="field-label">Schedule (optional)</span>
-                  <input v-model="examForm.scheduled_at" type="datetime-local" class="text-input" />
-                  <small class="muted">Students can take this exam at or after the set schedule.</small>
-                </label>
+                <div class="field-stack">
+                  <span class="field-label">Schedule Window (optional)</span>
+                  <div class="exam-schedule-row">
+                    <label class="field-stack">
+                      <span class="field-label">Start</span>
+                      <input v-model="examForm.schedule_start_at" type="datetime-local" class="text-input" />
+                    </label>
+                    <label class="field-stack">
+                      <span class="field-label">End</span>
+                      <input v-model="examForm.schedule_end_at" type="datetime-local" class="text-input" />
+                    </label>
+                  </div>
+                  <small class="muted">Leave both blank for always available exams. If set, students can only take exams inside this window.</small>
+                </div>
 
                 <label class="field-stack">
                   <span class="field-label">Quiz Delivery Mode</span>
@@ -1507,7 +1507,7 @@
                 <div class="field-stack">
                   <span class="field-label">Assign to rooms</span>
                   <div v-if="manageableRooms.length === 0" class="muted">No rooms available for assignment.</div>
-                  <div v-else class="check-grid">
+                  <div v-else class="check-grid exam-room-grid">
                     <label v-for="room in manageableRooms" :key="room.id" class="check-item">
                       <input v-model="examForm.room_ids" type="checkbox" :value="room.id" />
                       <span>{{ room.name }} <small>({{ room.code }})</small></span>
@@ -1515,7 +1515,9 @@
                   </div>
                 </div>
 
-                <div class="modal-actions">
+                </div>
+
+                <div class="modal-actions exam-modal-actions">
                   <button type="button" class="ghost-btn" :disabled="examSaving" @click="closeExamModal">Cancel</button>
                   <button
                     type="button"
@@ -1909,6 +1911,8 @@ import {
   AlertCircle,
   BarChart3,
   Bell,
+  Bookmark,
+  BookmarkCheck,
   BookOpen,
   CalendarDays,
   CheckCircle2,
@@ -1929,6 +1933,7 @@ import {
   Settings,
   ShieldCheck,
   Trash2,
+  UserMinus,
   UserRound,
   X,
 } from 'lucide-vue-next'
@@ -2013,6 +2018,8 @@ const selectedStudentExam = ref(null)
 const studentExamAttempt = ref(null)
 const studentExamQuestions = ref([])
 const studentExamCurrentIndex = ref(0)
+const isExamMobileViewport = ref(false)
+const examAttemptSidebarCollapsed = ref(false)
 const studentExamLoading = ref(false)
 const studentExamSaving = ref(false)
 const studentExamBookmarking = ref(false)
@@ -2032,7 +2039,8 @@ const examForm = reactive({
   question_bank_id: null,
   total_items: 60,
   duration_minutes: 90,
-  scheduled_at: '',
+  schedule_start_at: '',
+  schedule_end_at: '',
   delivery_mode: 'open_navigation',
   one_take_only: false,
   shuffle_questions: false,
@@ -2083,6 +2091,7 @@ const auditLoading = ref(false)
 const auditError = ref('')
 
 let mobileMediaQuery
+let examAttemptMobileMediaQuery
 let studentExamTimerInterval
 let studentExamSyncInterval
 let liveBoardRefreshInterval
@@ -2301,25 +2310,62 @@ watch(
   },
 )
 
+watch(
+  () => showExamSimulationModal.value,
+  (isOpen) => {
+    if (!isOpen) return
+    const mobileViewport = isExamMobileViewport.value
+      || (typeof window !== 'undefined' && window.matchMedia('(max-width: 1200px)').matches)
+
+    isExamMobileViewport.value = mobileViewport
+    examAttemptSidebarCollapsed.value = mobileViewport
+  },
+)
+
 function syncSidebarForViewport(eventOrQuery) {
   if (eventOrQuery.matches) {
     sidebarCollapsed.value = false
   }
 }
 
-onMounted(() => {
-  if (props.embedded) return
-  if (typeof window === 'undefined') return
+function syncExamAttemptSidebarForViewport(eventOrQuery) {
+  const mobileViewport = Boolean(eventOrQuery?.matches)
+  isExamMobileViewport.value = mobileViewport
 
-  mobileMediaQuery = window.matchMedia('(max-width: 900px)')
-  syncSidebarForViewport(mobileMediaQuery)
-
-  if (typeof mobileMediaQuery.addEventListener === 'function') {
-    mobileMediaQuery.addEventListener('change', syncSidebarForViewport)
+  if (mobileViewport) {
+    examAttemptSidebarCollapsed.value = true
     return
   }
 
-  mobileMediaQuery.addListener(syncSidebarForViewport)
+  examAttemptSidebarCollapsed.value = false
+}
+
+function toggleExamAttemptSidebar() {
+  examAttemptSidebarCollapsed.value = !examAttemptSidebarCollapsed.value
+}
+
+onMounted(() => {
+  if (typeof window === 'undefined') return
+
+  if (!props.embedded) {
+    mobileMediaQuery = window.matchMedia('(max-width: 900px)')
+    syncSidebarForViewport(mobileMediaQuery)
+
+    if (typeof mobileMediaQuery.addEventListener === 'function') {
+      mobileMediaQuery.addEventListener('change', syncSidebarForViewport)
+    } else {
+      mobileMediaQuery.addListener(syncSidebarForViewport)
+    }
+  }
+
+  examAttemptMobileMediaQuery = window.matchMedia('(max-width: 1200px)')
+  syncExamAttemptSidebarForViewport(examAttemptMobileMediaQuery)
+
+  if (typeof examAttemptMobileMediaQuery.addEventListener === 'function') {
+    examAttemptMobileMediaQuery.addEventListener('change', syncExamAttemptSidebarForViewport)
+  } else {
+    examAttemptMobileMediaQuery.addListener(syncExamAttemptSidebarForViewport)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -2327,14 +2373,21 @@ onBeforeUnmount(() => {
   stopStudentExamAutoSync()
   stopLiveBoardAutoRefresh()
 
-  if (!mobileMediaQuery) return
-
-  if (typeof mobileMediaQuery.removeEventListener === 'function') {
-    mobileMediaQuery.removeEventListener('change', syncSidebarForViewport)
-    return
+  if (mobileMediaQuery) {
+    if (typeof mobileMediaQuery.removeEventListener === 'function') {
+      mobileMediaQuery.removeEventListener('change', syncSidebarForViewport)
+    } else {
+      mobileMediaQuery.removeListener(syncSidebarForViewport)
+    }
   }
 
-  mobileMediaQuery.removeListener(syncSidebarForViewport)
+  if (examAttemptMobileMediaQuery) {
+    if (typeof examAttemptMobileMediaQuery.removeEventListener === 'function') {
+      examAttemptMobileMediaQuery.removeEventListener('change', syncExamAttemptSidebarForViewport)
+    } else {
+      examAttemptMobileMediaQuery.removeListener(syncExamAttemptSidebarForViewport)
+    }
+  }
 })
 
 function firstApiError(error, fallbackMessage) {
@@ -2348,6 +2401,13 @@ function displayMemberRole(role) {
   if (normalized === 'admin') return 'Administrator'
   if (normalized === 'staff_master_examiner') return 'Staff / Master Examiner'
   return 'Student'
+}
+
+function canRemoveRoomMember(member) {
+  if (!isManagementRole.value) return false
+
+  const memberRole = String(member?.role ?? '').toLowerCase()
+  return memberRole === 'student'
 }
 
 function splitQuestionStemAndNumberedItems(questionText) {
@@ -2413,20 +2473,131 @@ function toExamSchedulePayload(value) {
   return parsed.toISOString()
 }
 
+function examScheduleStart(exam) {
+  return exam?.schedule_start_at ?? exam?.scheduled_at ?? null
+}
+
+function examScheduleEnd(exam) {
+  return exam?.schedule_end_at ?? null
+}
+
+function studentMaxAttempts(exam) {
+  const resolvedMaxAttempts = Number(exam?.student_max_attempts)
+
+  if (Number.isFinite(resolvedMaxAttempts) && resolvedMaxAttempts > 0) {
+    return resolvedMaxAttempts
+  }
+
+  return exam?.one_take_only ? 1 : 2
+}
+
+function studentSubmittedAttempts(exam) {
+  const submittedAttempts = Number(exam?.student_submitted_attempts)
+
+  if (Number.isFinite(submittedAttempts) && submittedAttempts >= 0) {
+    return submittedAttempts
+  }
+
+  return isStudentExamCompleted(exam) ? 1 : 0
+}
+
+function studentAttemptsRemaining(exam) {
+  return Math.max(0, studentMaxAttempts(exam) - studentSubmittedAttempts(exam))
+}
+
+function isStudentExamRetakeLimitReached(exam) {
+  return isStudentExamCompleted(exam) && studentAttemptsRemaining(exam) <= 0
+}
+
 function canStudentTakeExam(exam) {
   if (!exam?.question_bank_id) return false
 
-  const schedule = parseDateTime(exam?.scheduled_at)
-  if (!schedule) return true
+  const now = Date.now()
+  const scheduleStart = parseDateTime(examScheduleStart(exam))
+  const scheduleEnd = parseDateTime(examScheduleEnd(exam))
 
-  return schedule.getTime() <= Date.now()
+  if (scheduleStart && scheduleStart.getTime() > now) return false
+  if (scheduleEnd && scheduleEnd.getTime() < now) return false
+
+  if (isStudentExamRetakeLimitReached(exam)) return false
+
+  return true
+}
+
+function studentExamAttemptState(exam) {
+  return String(exam?.student_attempt_state ?? 'not_started').toLowerCase()
+}
+
+function isStudentExamInProgress(exam) {
+  return studentExamAttemptState(exam) === 'in_progress'
+}
+
+function isStudentExamCompleted(exam) {
+  return studentExamAttemptState(exam) === 'submitted'
+}
+
+function studentSubmittedAttemptId(exam) {
+  const attemptId = Number(exam?.student_attempt_id ?? 0)
+  return Number.isFinite(attemptId) && attemptId > 0 ? attemptId : null
+}
+
+function canStudentOpenExam(exam) {
+  if (isStudentExamRetakeLimitReached(exam) && studentSubmittedAttemptId(exam)) {
+    return true
+  }
+
+  return canStudentTakeExam(exam)
+}
+
+function studentExamActionLabel(exam) {
+  if (isStudentExamInProgress(exam)) return 'Resume Exam'
+  if (isStudentExamCompleted(exam)) {
+    return isStudentExamRetakeLimitReached(exam) ? 'Review Result' : 'Retake Exam'
+  }
+
+  return 'Take Exam'
 }
 
 function studentExamAvailabilityText(exam) {
   if (!exam?.question_bank_id) return 'Not available (no question set linked)'
-  if (canStudentTakeExam(exam)) return 'Available now'
 
-  return `Available on ${formatExamSchedule(exam?.scheduled_at)}`
+  const now = Date.now()
+  const scheduleStart = parseDateTime(examScheduleStart(exam))
+  const scheduleEnd = parseDateTime(examScheduleEnd(exam))
+
+  if (scheduleStart && scheduleStart.getTime() > now) {
+    return `Available on ${formatExamSchedule(examScheduleStart(exam), examScheduleEnd(exam))}`
+  }
+
+  if (scheduleEnd && scheduleEnd.getTime() < now) {
+    return `Window ended on ${formatDateTime(examScheduleEnd(exam))}`
+  }
+
+  if (isStudentExamRetakeLimitReached(exam)) {
+    return studentMaxAttempts(exam) === 1
+      ? 'Completed (review only)'
+      : 'Retake limit reached (review only)'
+  }
+
+  if (isStudentExamInProgress(exam)) {
+    return 'In progress (resume anytime)'
+  }
+
+  if (isStudentExamCompleted(exam)) {
+    const remaining = studentAttemptsRemaining(exam)
+
+    if (remaining === 1) {
+      return '1 retake remaining'
+    }
+
+    return `Available for retake (${remaining} attempts left)`
+  }
+
+  if (scheduleEnd) {
+    return `Available until ${formatDateTime(examScheduleEnd(exam))}`
+  }
+
+  return 'Available now'
 }
 
 function clearStudentExamTimer() {
@@ -2508,6 +2679,16 @@ function syncStudentAnswerDraft() {
   studentAnswerDraft.answer_text = current.answer?.answer_text ?? ''
 }
 
+function examOptionCardClass(option) {
+  const optionId = Number(option?.id ?? 0)
+  const selectedOptionId = Number(studentAnswerDraft.selected_option_id ?? 0)
+  const isSelected = optionId > 0 && selectedOptionId > 0 && optionId === selectedOptionId
+
+  return {
+    selected: isSelected,
+  }
+}
+
 function questionHasAnswer(question) {
   if (!question) return false
 
@@ -2546,8 +2727,6 @@ function questionPaletteStatus(question, index) {
 
   if (isStudentExamSubmitted.value) {
     if (!hasAnswer) return 'post-missed'
-    if (question.answer?.is_correct === true) return 'post-correct'
-    if (question.answer?.is_correct === false) return 'post-incorrect'
     return 'post-answered'
   }
 
@@ -2567,8 +2746,6 @@ function questionPaletteClass(question, index) {
     'pre-answered': status === 'pre-answered',
     'pre-blank': status === 'pre-blank',
     'pre-pending': status === 'pre-pending',
-    'post-correct': status === 'post-correct',
-    'post-incorrect': status === 'post-incorrect',
     'post-missed': status === 'post-missed',
     'post-answered': status === 'post-answered',
   }
@@ -2581,7 +2758,8 @@ function resetExamForm() {
   examForm.question_bank_id = null
   examForm.total_items = 60
   examForm.duration_minutes = 90
-  examForm.scheduled_at = ''
+  examForm.schedule_start_at = ''
+  examForm.schedule_end_at = ''
   examForm.delivery_mode = 'open_navigation'
   examForm.one_take_only = false
   examForm.shuffle_questions = false
@@ -2604,7 +2782,8 @@ function openEditExamModal(exam) {
     : (exam.question_bank?.id ?? null)
   examForm.total_items = Number(exam.total_items ?? 1)
   examForm.duration_minutes = Number(exam.duration_minutes ?? 1)
-  examForm.scheduled_at = toDateTimeLocalValue(exam.scheduled_at)
+  examForm.schedule_start_at = toDateTimeLocalValue(exam.schedule_start_at ?? exam.scheduled_at)
+  examForm.schedule_end_at = toDateTimeLocalValue(exam.schedule_end_at)
   examForm.delivery_mode = normalizeExamDeliveryMode(exam.delivery_mode)
   examForm.one_take_only = Boolean(exam.one_take_only)
   examForm.shuffle_questions = Boolean(exam.shuffle_questions)
@@ -2682,7 +2861,10 @@ function applyStudentAttemptPayload(payload, preferredQuestionId = null) {
 }
 
 async function openExamSimulation(exam) {
-  if (!canStudentTakeExam(exam) || !selectedRoomId.value) return
+  if (!canStudentOpenExam(exam) || !selectedRoomId.value) return
+
+  const reviewOnlyMode = isStudentExamRetakeLimitReached(exam)
+  const submittedAttemptId = studentSubmittedAttemptId(exam)
 
   selectedStudentExam.value = {
     ...exam,
@@ -2693,6 +2875,13 @@ async function openExamSimulation(exam) {
   studentExamLoading.value = true
 
   try {
+    if (reviewOnlyMode && submittedAttemptId) {
+      const { data } = await services.getAttempt(submittedAttemptId)
+      applyStudentAttemptPayload(data)
+      roomMessage.value = 'Reviewing your submitted attempt.'
+      return
+    }
+
     const { data } = await services.startExam(exam.id, {
       room_id: selectedRoomId.value,
     })
@@ -3090,6 +3279,8 @@ async function fetchRoomDetails(roomId) {
           members: room.members ?? [],
           assigned_exams: (room.assigned_exams ?? []).map((exam) => ({
             ...exam,
+            schedule_start_at: exam.schedule_start_at ?? exam.scheduled_at ?? null,
+            schedule_end_at: exam.schedule_end_at ?? null,
             delivery_mode: normalizeExamDeliveryMode(exam.delivery_mode),
           })),
         }
@@ -3247,6 +3438,36 @@ async function handleLeaveRoom() {
   }
 }
 
+async function handleKickRoomMember(member) {
+  if (!selectedRoomId.value) return
+  if (!canRemoveRoomMember(member)) return
+
+  const memberId = Number(member?.id ?? 0)
+  if (!Number.isFinite(memberId) || memberId < 1) return
+
+  const memberName = String(member?.name ?? 'this student').trim() || 'this student'
+  const roomNameLabel = String(selectedRoom.value?.name ?? 'this room').trim() || 'this room'
+
+  if (typeof window !== 'undefined') {
+    const confirmed = window.confirm(`Remove ${memberName} from ${roomNameLabel}?`)
+    if (!confirmed) return
+  }
+
+  roomLoading.value = true
+  roomError.value = ''
+  roomMessage.value = ''
+
+  try {
+    const { data } = await services.removeRoomMember(selectedRoomId.value, memberId)
+    roomMessage.value = data?.message ?? `${memberName} has been removed from the room.`
+    await fetchRooms(selectedRoomId.value)
+  } catch (error) {
+    roomError.value = firstApiError(error, 'Unable to remove student from this room right now.')
+  } finally {
+    roomLoading.value = false
+  }
+}
+
 async function fetchManageableRooms() {
   try {
     const { data } = await services.getRooms()
@@ -3289,6 +3510,8 @@ async function loadExams() {
     ])
     exams.value = (examData.exams ?? []).map((exam) => ({
       ...exam,
+      schedule_start_at: exam.schedule_start_at ?? exam.scheduled_at ?? null,
+      schedule_end_at: exam.schedule_end_at ?? null,
       delivery_mode: normalizeExamDeliveryMode(exam.delivery_mode),
     }))
   } catch (error) {
@@ -3305,9 +3528,17 @@ async function handleSaveExam() {
   examError.value = ''
   examMessage.value = ''
 
-  const scheduledAt = toExamSchedulePayload(examForm.scheduled_at)
-  if (examForm.scheduled_at && !scheduledAt) {
-    examError.value = 'Please provide a valid schedule date and time.'
+  const scheduleStartAt = toExamSchedulePayload(examForm.schedule_start_at)
+  const scheduleEndAt = toExamSchedulePayload(examForm.schedule_end_at)
+
+  if ((examForm.schedule_start_at && !scheduleStartAt) || (examForm.schedule_end_at && !scheduleEndAt)) {
+    examError.value = 'Please provide valid start/end schedule values.'
+    examSaving.value = false
+    return
+  }
+
+  if (scheduleStartAt && scheduleEndAt && new Date(scheduleEndAt).getTime() < new Date(scheduleStartAt).getTime()) {
+    examError.value = 'Schedule end must be after or equal to schedule start.'
     examSaving.value = false
     return
   }
@@ -3326,7 +3557,9 @@ async function handleSaveExam() {
     question_bank_id: examForm.question_bank_id ? Number(examForm.question_bank_id) : null,
     total_items: Number(examForm.total_items),
     duration_minutes: Number(examForm.duration_minutes),
-    scheduled_at: scheduledAt,
+    scheduled_at: scheduleStartAt,
+    schedule_start_at: scheduleStartAt,
+    schedule_end_at: scheduleEndAt,
     delivery_mode: normalizeExamDeliveryMode(examForm.delivery_mode),
     one_take_only: Boolean(examForm.one_take_only),
     shuffle_questions: normalizeExamDeliveryMode(examForm.delivery_mode) === 'teacher_paced'

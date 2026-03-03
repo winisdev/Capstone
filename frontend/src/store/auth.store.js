@@ -44,6 +44,8 @@ export const useAuthStore = defineStore('auth', () => {
   async function logout() {
     try {
       await authApi.logout()
+    } catch (error) {
+      // If token/session is already invalid, still proceed with local logout.
     } finally {
       user.value = null
       initialized.value = true

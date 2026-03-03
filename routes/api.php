@@ -294,6 +294,8 @@ Route::middleware('auth:sanctum')->group(function () use (
                 'exams.total_items',
                 'exams.duration_minutes',
                 'exams.scheduled_at',
+                'exams.schedule_start_at',
+                'exams.schedule_end_at',
                 'exams.delivery_mode',
                 'exams.one_take_only',
                 'exams.shuffle_questions',
@@ -307,6 +309,66 @@ Route::middleware('auth:sanctum')->group(function () use (
                 return $assignedExam;
             })
             ->values();
+
+        if (!$canManageRooms($user) && $assignedExams->isNotEmpty()) {
+            $examIds = $assignedExams
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            $attemptsByExamId = ExamAttempt::query()
+                ->whereIn('exam_id', $examIds)
+                ->where('user_id', $user->id)
+                ->whereIn('status', [
+                    ExamAttempt::STATUS_IN_PROGRESS,
+                    ExamAttempt::STATUS_SUBMITTED,
+                ])
+                ->select('id', 'exam_id', 'room_id', 'status', 'submitted_at', 'started_at')
+                ->orderByDesc('started_at')
+                ->orderByDesc('id')
+                ->get()
+                ->groupBy('exam_id');
+
+            $assignedExams = $assignedExams
+                ->map(function ($assignedExam) use ($attemptsByExamId, $room) {
+                    $attempts = $attemptsByExamId->get((int) $assignedExam->id, collect());
+                    $submittedAttempts = $attempts->filter(
+                        fn (ExamAttempt $attempt) => $attempt->status === ExamAttempt::STATUS_SUBMITTED
+                    );
+
+                    $inProgressAttempt = $attempts->first(
+                        fn (ExamAttempt $attempt) => $attempt->status === ExamAttempt::STATUS_IN_PROGRESS
+                            && (int) $attempt->room_id === (int) $room->id
+                    );
+
+                    $submittedAttempt = $submittedAttempts->first();
+                    $submittedAttemptCount = (int) $submittedAttempts->count();
+                    $maxAllowedAttempts = (bool) $assignedExam->one_take_only ? 1 : 2;
+                    $remainingAttempts = max(0, $maxAllowedAttempts - $submittedAttemptCount);
+
+                    $attemptState = 'not_started';
+                    $latestAttemptId = null;
+
+                    if ($inProgressAttempt) {
+                        $attemptState = 'in_progress';
+                        $latestAttemptId = (int) $inProgressAttempt->id;
+                    } elseif ($submittedAttempt) {
+                        $attemptState = 'submitted';
+                        $latestAttemptId = (int) $submittedAttempt->id;
+                    }
+
+                    $assignedExam->student_attempt_state = $attemptState;
+                    $assignedExam->student_attempt_id = $latestAttemptId;
+                    $assignedExam->student_submitted_at = $submittedAttempt?->submitted_at;
+                    $assignedExam->student_submitted_attempts = $submittedAttemptCount;
+                    $assignedExam->student_max_attempts = $maxAllowedAttempts;
+                    $assignedExam->student_attempts_remaining = $remainingAttempts;
+                    $assignedExam->student_can_start_attempt = $remainingAttempts > 0;
+
+                    return $assignedExam;
+                })
+                ->values();
+        }
 
         $roomData = [
             'id' => $room->id,
@@ -469,6 +531,58 @@ Route::middleware('auth:sanctum')->group(function () use (
         return response()->json([
             'message' => 'Joined room successfully',
             'room' => $room,
+        ]);
+    });
+
+    Route::delete('/rooms/{room}/members/{member}', function (
+        Request $request,
+        Room $room,
+        User $member
+    ) use ($canManageRooms, $ensureActive, $isAdmin, $recordAudit) {
+        if ($inactiveResponse = $ensureActive($request)) {
+            return $inactiveResponse;
+        }
+
+        $user = $request->user();
+
+        if (!$canManageRooms($user)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        if (!$isAdmin($user) && (int) $room->created_by !== (int) $user->id) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        if ($member->role !== User::ROLE_STUDENT) {
+            return response()->json([
+                'message' => 'Only student members can be removed from rooms.',
+            ], 422);
+        }
+
+        $detached = $room->members()->detach($member->id);
+        if ($detached === 0) {
+            return response()->json([
+                'message' => 'Student is not enrolled in this room.',
+            ], 404);
+        }
+
+        $recordAudit(
+            $user,
+            'room.member.remove',
+            'room',
+            $room->id,
+            'Removed student from room',
+            [
+                'room_id' => $room->id,
+                'room_code' => $room->code,
+                'student_id' => $member->id,
+                'student_email' => $member->email,
+            ],
+            $request,
+        );
+
+        return response()->json([
+            'message' => 'Student removed from room.',
         ]);
     });
 
@@ -866,6 +980,8 @@ Route::middleware('auth:sanctum')->group(function () use (
             'total_items' => ['required', 'integer', 'min:1', 'max:1000'],
             'duration_minutes' => ['required', 'integer', 'min:1', 'max:600'],
             'scheduled_at' => ['nullable', 'date'],
+            'schedule_start_at' => ['nullable', 'date'],
+            'schedule_end_at' => ['nullable', 'date'],
             'delivery_mode' => ['nullable', Rule::in($deliveryModeValidationModes)],
             'one_take_only' => ['nullable', 'boolean'],
             'shuffle_questions' => ['nullable', 'boolean'],
@@ -874,6 +990,14 @@ Route::middleware('auth:sanctum')->group(function () use (
         ]);
 
         $deliveryMode = $normalizeDeliveryMode($validated['delivery_mode'] ?? null);
+        $scheduleStartAt = $validated['schedule_start_at'] ?? $validated['scheduled_at'] ?? null;
+        $scheduleEndAt = $validated['schedule_end_at'] ?? null;
+
+        if (!is_null($scheduleStartAt) && !is_null($scheduleEndAt) && strtotime((string) $scheduleEndAt) < strtotime((string) $scheduleStartAt)) {
+            return response()->json([
+                'message' => 'Schedule end must be after or equal to schedule start.',
+            ], 422);
+        }
 
         $questionBank = null;
 
@@ -904,7 +1028,9 @@ Route::middleware('auth:sanctum')->group(function () use (
             'question_bank_id' => $validated['question_bank_id'] ?? null,
             'total_items' => $validated['total_items'],
             'duration_minutes' => $validated['duration_minutes'],
-            'scheduled_at' => $validated['scheduled_at'] ?? null,
+            'scheduled_at' => $scheduleStartAt,
+            'schedule_start_at' => $scheduleStartAt,
+            'schedule_end_at' => $scheduleEndAt,
             'delivery_mode' => $deliveryMode,
             'one_take_only' => (bool) ($validated['one_take_only'] ?? false),
             'shuffle_questions' => $deliveryMode === Exam::DELIVERY_MODE_TEACHER_PACED
@@ -950,6 +1076,8 @@ Route::middleware('auth:sanctum')->group(function () use (
             [
                 'title' => $exam->title,
                 'scheduled_at' => $exam->scheduled_at,
+                'schedule_start_at' => $exam->schedule_start_at,
+                'schedule_end_at' => $exam->schedule_end_at,
                 'delivery_mode' => $normalizeDeliveryMode($exam->delivery_mode),
                 'question_bank_id' => $exam->question_bank_id,
                 'one_take_only' => (bool) $exam->one_take_only,
@@ -997,6 +1125,8 @@ Route::middleware('auth:sanctum')->group(function () use (
             'total_items' => ['sometimes', 'required', 'integer', 'min:1', 'max:1000'],
             'duration_minutes' => ['sometimes', 'required', 'integer', 'min:1', 'max:600'],
             'scheduled_at' => ['sometimes', 'nullable', 'date'],
+            'schedule_start_at' => ['sometimes', 'nullable', 'date'],
+            'schedule_end_at' => ['sometimes', 'nullable', 'date'],
             'delivery_mode' => ['sometimes', 'required', Rule::in($deliveryModeValidationModes)],
             'one_take_only' => ['sometimes', 'boolean'],
             'shuffle_questions' => ['sometimes', 'boolean'],
@@ -1006,6 +1136,20 @@ Route::middleware('auth:sanctum')->group(function () use (
 
         if (array_key_exists('delivery_mode', $validated)) {
             $validated['delivery_mode'] = $normalizeDeliveryMode((string) $validated['delivery_mode']);
+        }
+
+        $currentScheduleStart = $exam->schedule_start_at ?? $exam->scheduled_at;
+        $resolvedScheduleStart = array_key_exists('schedule_start_at', $validated)
+            ? $validated['schedule_start_at']
+            : (array_key_exists('scheduled_at', $validated) ? $validated['scheduled_at'] : $currentScheduleStart);
+        $resolvedScheduleEnd = array_key_exists('schedule_end_at', $validated)
+            ? $validated['schedule_end_at']
+            : $exam->schedule_end_at;
+
+        if (!is_null($resolvedScheduleStart) && !is_null($resolvedScheduleEnd) && strtotime((string) $resolvedScheduleEnd) < strtotime((string) $resolvedScheduleStart)) {
+            return response()->json([
+                'message' => 'Schedule end must be after or equal to schedule start.',
+            ], 422);
         }
 
         $resolvedQuestionBankId = array_key_exists('question_bank_id', $validated)
@@ -1036,8 +1180,15 @@ Route::middleware('auth:sanctum')->group(function () use (
             }
         }
 
-        $exam->fill($validated);
+        $exam->fill(collect($validated)->except([
+            'scheduled_at',
+            'schedule_start_at',
+            'schedule_end_at',
+        ])->all());
         $exam->subject = $resolvedQuestionBank?->subject;
+        $exam->scheduled_at = $resolvedScheduleStart;
+        $exam->schedule_start_at = $resolvedScheduleStart;
+        $exam->schedule_end_at = $resolvedScheduleEnd;
 
         if ($normalizeDeliveryMode($exam->delivery_mode) === Exam::DELIVERY_MODE_TEACHER_PACED) {
             $exam->shuffle_questions = false;
@@ -1082,6 +1233,8 @@ Route::middleware('auth:sanctum')->group(function () use (
             [
                 'title' => $exam->title,
                 'scheduled_at' => $exam->scheduled_at,
+                'schedule_start_at' => $exam->schedule_start_at,
+                'schedule_end_at' => $exam->schedule_end_at,
                 'delivery_mode' => $normalizeDeliveryMode($exam->delivery_mode),
                 'question_bank_id' => $exam->question_bank_id,
                 'one_take_only' => (bool) $exam->one_take_only,
@@ -1368,6 +1521,8 @@ Route::middleware('auth:sanctum')->group(function () use (
                 'total_items' => (int) $exam->total_items,
                 'duration_minutes' => (int) $exam->duration_minutes,
                 'scheduled_at' => $exam->scheduled_at,
+                'schedule_start_at' => $exam->schedule_start_at,
+                'schedule_end_at' => $exam->schedule_end_at,
                 'delivery_mode' => $deliveryMode,
                 'shuffle_questions' => (bool) $exam->shuffle_questions,
                 'one_take_only' => (bool) $exam->one_take_only,
@@ -1605,10 +1760,20 @@ Route::middleware('auth:sanctum')->group(function () use (
             ], 422);
         }
 
-        if ($exam->scheduled_at && now()->lt($exam->scheduled_at)) {
+        $scheduleStartAt = $exam->schedule_start_at ?? $exam->scheduled_at;
+        $scheduleEndAt = $exam->schedule_end_at;
+
+        if ($scheduleStartAt && now()->lt($scheduleStartAt)) {
             return response()->json([
                 'message' => 'This exam is not yet available based on schedule.',
-                'available_at' => $exam->scheduled_at,
+                'available_at' => $scheduleStartAt,
+            ], 422);
+        }
+
+        if ($scheduleEndAt && now()->gt($scheduleEndAt)) {
+            return response()->json([
+                'message' => 'This exam is no longer available because the schedule window has ended.',
+                'available_until' => $scheduleEndAt,
             ], 422);
         }
 
@@ -1657,18 +1822,20 @@ Route::middleware('auth:sanctum')->group(function () use (
             }
         }
 
-        if ((bool) $exam->one_take_only) {
-            $hasSubmittedAttempt = ExamAttempt::query()
-                ->where('exam_id', $exam->id)
-                ->where('user_id', $user->id)
-                ->where('status', ExamAttempt::STATUS_SUBMITTED)
-                ->exists();
+        $submittedAttemptCount = ExamAttempt::query()
+            ->where('exam_id', $exam->id)
+            ->where('user_id', $user->id)
+            ->where('status', ExamAttempt::STATUS_SUBMITTED)
+            ->count();
 
-            if ($hasSubmittedAttempt) {
-                return response()->json([
-                    'message' => 'This exam allows one attempt only and your attempt is already submitted.',
-                ], 422);
-            }
+        $maxAllowedAttempts = (bool) $exam->one_take_only ? 1 : 2;
+
+        if ($submittedAttemptCount >= $maxAllowedAttempts) {
+            return response()->json([
+                'message' => (bool) $exam->one_take_only
+                    ? 'This exam allows one attempt only and your attempt is already submitted.'
+                    : 'Retake limit reached. You can only take this exam twice (1 initial attempt + 1 retake).',
+            ], 422);
         }
 
         $questionBankId = (int) $questionBank->id;

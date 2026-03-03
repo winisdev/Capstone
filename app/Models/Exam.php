@@ -39,6 +39,8 @@ class Exam extends Model
         'total_items',
         'duration_minutes',
         'scheduled_at',
+        'schedule_start_at',
+        'schedule_end_at',
         'delivery_mode',
         'one_take_only',
         'shuffle_questions',
@@ -52,6 +54,8 @@ class Exam extends Model
      */
     protected $casts = [
         'scheduled_at' => 'datetime',
+        'schedule_start_at' => 'datetime',
+        'schedule_end_at' => 'datetime',
         'one_take_only' => 'boolean',
         'shuffle_questions' => 'boolean',
     ];

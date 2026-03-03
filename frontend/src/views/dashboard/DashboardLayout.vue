@@ -2,7 +2,12 @@
   <div class="layout-shell">
     <aside class="layout-sidebar" :class="{ collapsed: sidebarCollapsed }">
       <div class="layout-sidebar-top">
-        <button class="layout-toggle" @click="sidebarCollapsed = !sidebarCollapsed">
+        <button
+          class="layout-toggle"
+          :aria-expanded="(!sidebarCollapsed).toString()"
+          aria-label="Toggle navigation"
+          @click="sidebarCollapsed = !sidebarCollapsed"
+        >
           <ChevronRight v-if="sidebarCollapsed" :size="16" />
           <ChevronLeft v-else :size="16" />
         </button>
@@ -11,7 +16,7 @@
           <span class="layout-brand-icon">
             <GraduationCap :size="20" />
           </span>
-          <span v-if="!sidebarCollapsed" class="layout-brand-text">
+          <span v-if="!sidebarCollapsed || isMobileViewport" class="layout-brand-text">
             <strong>LNU LLE</strong>
             <small>Review System</small>
           </span>
@@ -63,7 +68,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth.store'
 import {
@@ -86,6 +91,8 @@ const route = useRoute()
 const router = useRouter()
 
 const sidebarCollapsed = ref(false)
+const isMobileViewport = ref(false)
+const mobileMediaQuery = '(max-width: 900px)'
 
 const normalizedRole = computed(() => String(auth.user?.role ?? 'student').toLowerCase())
 const isManagementRole = computed(() => ['admin', 'staff_master_examiner'].includes(normalizedRole.value))
@@ -136,14 +143,46 @@ const userInitials = computed(() => {
 })
 
 function navigate(name) {
-  if (currentRouteName.value === name) return
+  if (currentRouteName.value === name) {
+    if (isMobileViewport.value) {
+      sidebarCollapsed.value = true
+    }
+    return
+  }
   router.push({ name })
+  if (isMobileViewport.value) {
+    sidebarCollapsed.value = true
+  }
 }
 
 async function handleLogout() {
   await auth.logout()
   await router.push('/login')
 }
+
+function syncViewportState() {
+  if (typeof window === 'undefined') return
+
+  const mobile = window.matchMedia(mobileMediaQuery).matches
+  const wasMobile = isMobileViewport.value
+
+  isMobileViewport.value = mobile
+
+  if (mobile && !wasMobile) {
+    sidebarCollapsed.value = true
+  } else if (!mobile && wasMobile) {
+    sidebarCollapsed.value = false
+  }
+}
+
+onMounted(() => {
+  syncViewportState()
+  window.addEventListener('resize', syncViewportState)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncViewportState)
+})
 </script>
 
 <style scoped>
@@ -179,6 +218,45 @@ async function handleLogout() {
   width: 84px;
   padding-left: 10px;
   padding-right: 10px;
+}
+
+.layout-sidebar.collapsed .layout-sidebar-top {
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.layout-sidebar.collapsed .layout-toggle {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.layout-sidebar.collapsed .layout-brand {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 12px;
+}
+
+.layout-sidebar.collapsed .layout-brand-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.layout-sidebar.collapsed .layout-nav {
+  justify-items: center;
+  gap: 8px;
+}
+
+.layout-sidebar.collapsed .layout-nav-item {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 12px;
 }
 
 .layout-sidebar-top {
@@ -376,7 +454,44 @@ async function handleLogout() {
     padding: 10px 12px 8px;
   }
 
-  .layout-toggle {
+  .layout-sidebar-top {
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .layout-sidebar.collapsed {
+    padding-bottom: 10px;
+  }
+
+  .layout-sidebar.collapsed .layout-sidebar-top {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .layout-sidebar.collapsed .layout-toggle {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+  }
+
+  .layout-sidebar.collapsed .layout-brand {
+    width: auto;
+    height: auto;
+    padding: 4px;
+    justify-content: flex-start;
+    border-radius: 0;
+  }
+
+  .layout-sidebar.collapsed .layout-brand-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .layout-sidebar.collapsed .layout-nav,
+  .layout-sidebar.collapsed .layout-sidebar-footer {
     display: none;
   }
 

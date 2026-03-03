@@ -99,8 +99,16 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   const isPublic = ['login', 'register', 'forgot-password'].includes(String(to.name))
 
+  if (!auth.initialized) {
+    await auth.fetchMe({ silent: true })
+  }
+
   if (!isPublic && !auth.isAuthenticated) {
     return { name: 'login' }
+  }
+
+  if (isPublic && auth.isAuthenticated) {
+    return { name: 'dashboard-home' }
   }
 })
 

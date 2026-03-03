@@ -23,10 +23,10 @@ class AuthTokenCookieService
             $minutes,
             '/',
             null,
-            !app()->environment('local'),
+            true,
             true,
             false,
-            'strict',
+            'none',
         ));
     }
 

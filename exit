@@ -1,0 +1,21 @@
+* [33m4ab35ea[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31mcapstone/main[m[33m)[m fix: restore backend auth flow and enable cross-site auth cookie
+* [33mb6a5124[m fix: persist auth user state to prevent immediate login redirect
+* [33mef82213[m fix: robust CORS for vercel origins
+* [33mf75eaa6[m fix: allow vercel frontend origin in CORS
+* [33m624154c[m fix: support VITE_API_URL and VITE_API_BASE_URL for API base
+* [33m3857b4f[m fix: stop auto session restore and enforce explicit login
+* [33m389b512[m fix: require explicit login on fresh site visit
+* [33mf9807d5[m fix: require login by default via session auth cookie
+* [33md4650b4[m fix: add vercel SPA rewrite
+* [33mb3b3c03[m Rollback
+* [33m628510a[m chore: make dockerfile render-compatible
+* [33m5687c91[m[33m ([m[1;32mupload/codebase-2026-02-27[m[33m)[m chore: update package lockfile
+*   [33mcf95eab[m Merge pull request #1 from eggeol/feature/exam-mode
+[32m|[m[33m\[m  
+[32m|[m * [33m0c14952[m Slightly changed project structure
+[32m|[m * [33m63fe2a2[m Added different exam modes
+[32m|[m * [33m5f1c288[m Added question parsing
+[32m|[m[32m/[m  
+* [33m98eef5a[m chore: upload local codebase snapshot
+* [33m4fee9b5[m Initial Setup
+* [33mfb2788a[m[33m ([m[1;32mbackup-before-sync[m[33m)[m Initial commit
